@@ -39,10 +39,17 @@
   }
 
   // The model in one function: TVL x the snapshot's own median multiple x the
-  // category factor x the growth multiplier x the maturity multiplier.
+  // category factor x the growth multiplier x the maturity multiplier. Below
+  // the kink the fall is charged at full weight, not half — the same
+  // piecewise formula lib/model.ts uses, so the page and the board agree.
   function impliedOf(row, model) {
     var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
-    var growthMult = 1 + (growth / 100) * model.growth_weight;
+    var growthMult;
+    if (growth >= model.growth_kink) {
+      growthMult = 1 + (growth / 100) * model.growth_weight;
+    } else {
+      growthMult = 1 + (model.growth_kink / 100) * model.growth_weight + ((growth - model.growth_kink) / 100) * model.growth_below_weight;
+    }
     var age = row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
     var maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
     var factor = (model.category_factors && model.category_factors[row.category || 'Other']) || 1;
