@@ -12,8 +12,10 @@
 // of their own. Centralised exchanges and versioned pools are left out too.
 //
 //   implied = tvl_usd x base_multiple x category_factor
-//                     x (1 + clamp(change_7d, -60, 120) / 100 x 0.5)
-//                     x (0.6 + min(age_days, 1095) / 1095 x 0.4)
+//                     x growth(change_7d) x (0.6 + min(age_days, 1095) / 1095 x 0.4)
+//   growth(p) is 1 + clamp(p, -60, 120) / 100 x 0.5 down to -20%; below
+//   -20% the part under -20 is charged at full weight, so a -60% protocol
+//   keeps half its multiple, not 70%.
 //
 // Age is the days since the protocol was first listed, the record of how long
 // it has run with no token; an unlisted age counts as 365 days. The board
@@ -50,6 +52,10 @@ export interface ModelConstants {
   growth_weight: number;
   growth_floor: number;
   growth_cap: number;
+  /** The 7-day change below which the fall is charged at full weight. */
+  growth_kink: number;
+  /** The weight on the part of the fall below the kink. */
+  growth_below_weight: number;
   maturity_floor: number;
   maturity_range: number;
   maturity_days: number;
@@ -194,6 +200,8 @@ export function deriveModel(snapshot: Snapshot): ModelConstants {
     growth_weight: 0.5,
     growth_floor: -60,
     growth_cap: 120,
+    growth_kink: -20,
+    growth_below_weight: 1,
     maturity_floor: 0.6,
     maturity_range: 0.4,
     maturity_days: 1095,
@@ -215,7 +223,12 @@ export function impliedValue(
 ): { implied: number; growthPct: number; growthMult: number; maturityMult: number; age: number | null; catFactor: number } {
   const age = ageDays(asOf, protocol.listed_at);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, finite(protocol.change_7d, 0)));
-  const growthMult = 1 + (growthPct / 100) * model.growth_weight;
+  // Below the kink the fall is charged at full weight, not half: a protocol
+  // collapsing 60% in a week keeps half its multiple, not 70%.
+  const growthMult =
+    growthPct >= model.growth_kink
+      ? 1 + (growthPct / 100) * model.growth_weight
+      : 1 + (model.growth_kink / 100) * model.growth_weight + ((growthPct - model.growth_kink) / 100) * model.growth_below_weight;
   const ageForModel = age ?? model.unknown_age_days;
   const maturityMult =
     model.maturity_floor +
